@@ -9,8 +9,10 @@
 #include <netinet/in.h>
 #include <pthread.h>
 #include <unistd.h>
+#include <signal.h>
 
 #include "nty_tree.h"
+#include <sys/queue.h>
 
 #include <rte_eal.h>
 #include <rte_ethdev.h>
@@ -18,6 +20,7 @@
 #include <rte_ether.h>
 #include <rte_mempool.h>
 #include <rte_flow.h>
+#include <rte_lcore.h>
 
 #include <rte_malloc.h>
 #include <rte_timer.h>
@@ -40,7 +43,19 @@
 #define   D_TCP_INITIAL_WINDOW  14600
 #define   D_TCP_MAX_SEQ		    0xffffffff
 #define   D_TCP_BUFFER_SIZE  1024
-#define   TIMER_RESOLUTION_CYCLES 120000000000ULL // 10ms * 1000 = 10s * 6 
+
+//timer相关 电脑cpu主频为1.8Ghz =1.8 * 10^9= 1 800 000 000Hz = 1s
+#define   TIMER_RESOLUTION_CYCLES 180000000ULL //目前是100ms
+
+//epoll相关
+#define  ENABLE_SINGLE_EPOLL 1
+
+#define ENABLE_HASH 1
+
+//数据采集
+#define ENABLE_COLLECT 0
+//debug 模式
+#define ENABLE_DEBUG 0
 
 // 头插法 
 #define LL_ADD(item, list) do			 \
@@ -124,14 +139,15 @@ struct epoll_event
 	epoll_data_t data;
 };
 
+//红黑树的一个节点
 struct epitem 
 {
-	RB_ENTRY(epitem) rbn;
-	LIST_ENTRY(epitem) rdlink;
+	RB_ENTRY(epitem) rbn; /*red black tree*/
+	LIST_ENTRY(epitem) rdlink; /*list*/
 	int rdy; //exist in list 
 	
-	int sockfd;
-	struct epoll_event event; 
+	int sockfd; //socketfd 文件描述符
+	struct epoll_event event;  //轮询事件
 };
 
 static int sockfd_cmp(struct epitem *ep1, struct epitem *ep2) 
@@ -140,20 +156,22 @@ static int sockfd_cmp(struct epitem *ep1, struct epitem *ep2)
 	else if (ep1->sockfd == ep2->sockfd) return 0;
 	return 1;
 }
-
+//创建一颗红黑树，红黑树根节点名为_epoll_rb_socket, type为epitem
 RB_HEAD(_epoll_rb_socket, epitem);
+//实现红黑树增删改查的功能
 RB_GENERATE_STATIC(_epoll_rb_socket, epitem, rbn, sockfd_cmp);
 
 typedef struct _epoll_rb_socket ep_rb_tree;
 
+//轮询事件结构
 struct eventpoll 
 {
 	int fd;
 
-	ep_rb_tree rbr;
+	ep_rb_tree rbr; //红黑树
 	int rbcnt;
 	
-	LIST_HEAD( ,epitem) rdlist;
+	LIST_HEAD( ,epitem) rdlist;//准备队列
 	int rdnum;
 
 	int waiting;
@@ -183,6 +201,7 @@ struct rte_mbuf *ng_send_arp(struct rte_mempool *mbuf_pool, uint16_t opcode, uns
                                 uint32_t sip, uint32_t dip);
 
 // search
+//TODO search 功能使用DPDK 布谷鸟哈希表优化
 struct localhost * get_hostinfo_fromip_port(uint32_t dip, uint16_t port, unsigned char proto);
 void* get_hostinfo_fromfd(int iSockFd);
 
@@ -190,12 +209,10 @@ struct tcp_table *tcpInstance(void);
 struct tcp_stream * tcp_stream_search(uint32_t sip, uint32_t dip, uint16_t sport, uint16_t dport);
 
 // socket api 
-//TODO socket api 
 int nsocket(__attribute__((unused)) int domain, int type, __attribute__((unused))  int protocol);
 int nbind(int sockfd, const struct sockaddr *addr, __attribute__((unused))  socklen_t addrlen);
 int nlisten(int sockfd, __attribute__((unused)) int backlog);
 int naccept(int sockfd, struct sockaddr *addr, __attribute__((unused)) socklen_t *addrlen);
-//TODO 待完善nconnect
 int nconnect(int sockfd, const struct sockaddr *addr, const struct sockaddr *srcaddr, __attribute__((unused)) socklen_t addrlen);
 ssize_t nsend(int sockfd, const void *buf, size_t len,__attribute__((unused)) int flags);
 ssize_t nrecv(int sockfd, void *buf, size_t len, __attribute__((unused)) int flags);
@@ -204,6 +221,7 @@ ssize_t nrecvfrom(int sockfd, void *buf, size_t len, __attribute__((unused))  in
 ssize_t nsendto(int sockfd, const void *buf, size_t len, __attribute__((unused))  int flags,
                       const struct sockaddr *dest_addr, __attribute__((unused))  socklen_t addrlen);
 int nclose(int fd);
+//FIXME 待完善nclose_tcp_client
 int nclose_tcp_client(int fd);
 
 // epoll
@@ -213,4 +231,4 @@ int nepoll_ctl(int epfd, int op, int sockid, struct epoll_event *event);
 int nepoll_wait(int epfd, struct epoll_event *events, int maxevents, int timeout);
 
 
-#endif
+#endif;

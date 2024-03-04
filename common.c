@@ -114,13 +114,13 @@ void* get_hostinfo_fromfd(int iSockFd)
 	struct localhost *pstHost = NULL;
 	struct tcp_stream *pstStream = NULL;
 
-	for (pstHost = g_pstHost; pstHost != NULL; pstHost = g_pstHost->next) 
+	for (pstHost = g_pstHost; pstHost != NULL; pstHost = g_pstHost->next) //UDP
     {
 		if (iSockFd == pstHost->fd) 
 			return pstHost;
 	}
 
-	for (pstStream = g_pstTcpTbl->tcb_set; pstStream != NULL; pstStream = pstStream->next) {
+	for (pstStream = g_pstTcpTbl->tcb_set; pstStream != NULL; pstStream = pstStream->next) { //TCP
 		if (iSockFd == pstStream->fd) {
 			return pstStream;
 		}
@@ -129,7 +129,7 @@ void* get_hostinfo_fromfd(int iSockFd)
 
 #if ENABLE_SINGLE_EPOLL
 
-	struct eventpoll *ep = g_pstTcpTbl->ep;
+	struct eventpoll *ep = g_pstTcpTbl->ep; //TCP epoll
 	if (ep != NULL) 
     {
 		if (ep->fd == iSockFd) 
@@ -471,7 +471,7 @@ int nconnect(int sockfd, const struct sockaddr *dstaddr, const struct sockaddr *
 		pstFragment->data = NULL;
 		pstFragment->length = 0;
 
-		//TODO发送SYN包 
+		//发送SYN包 
 		rte_ring_mp_enqueue(pstStream->sndbuf, pstFragment);
 
 		pstStream->status = TCP_STATUS_SYN_SENT;
@@ -614,7 +614,8 @@ ssize_t nrecvfrom(int sockfd, void *buf, size_t len, __attribute__((unused))  in
 	unsigned char *pucPtr = NULL;
     int iLen = 0;
     int iRet = -1;
-
+	
+	//TODO 可以使用hash_table优化
     pstHostInfo = (struct localhost *)get_hostinfo_fromfd(sockfd);
     if(pstHostInfo == NULL) 
         return -1;
@@ -679,7 +680,9 @@ ssize_t nsendto(int sockfd, const void *buf, size_t len, __attribute__((unused))
     
     struct in_addr addr;
 	addr.s_addr = pstOffLoad->dip;
+#if ENABLE_DEBUG
 	printf("nsendto ---> src: %s:%d \n", inet_ntoa(addr), ntohs(pstOffLoad->dport));
+#endif
     
     
     pstOffLoad->data = rte_malloc("unsigned char *", len, 0);
@@ -822,6 +825,7 @@ int nclose_tcp_client(int fd)
 
 #if ENABLE_SINGLE_EPOLL
 
+//epoll回调函数，将fd添加到准备队列
 int epoll_event_callback(struct eventpoll *ep, int sockid, uint32_t event)
 {
 	struct epitem tmp;
@@ -837,8 +841,9 @@ int epoll_event_callback(struct eventpoll *ep, int sockid, uint32_t event)
 		epi->event.events |= event;
 		return 1;
 	} 
-
+#if ENABLE_DEBUG
 	printf("epoll_event_callback --> %d\n", epi->sockfd);
+#endif
 	
 	pthread_spin_lock(&ep->lock);
 	epi->rdy = 1;
@@ -851,12 +856,13 @@ int epoll_event_callback(struct eventpoll *ep, int sockid, uint32_t event)
 	pthread_cond_signal(&ep->cond);
 	pthread_mutex_unlock(&ep->cdmtx);
 }
-
+//对event poll进行初始化 并且将其添加到tcp_table中
 int nepoll_create(int size)
 {
+	//size必须大于0
     if (size <= 0) return -1;
-    // epfd --> struct eventpoll
-	int epfd = get_fd_frombitmap(); //tcp, udp
+    // epfd --> struct eventpoll 一一对应
+	int epfd = get_fd_frombitmap(); //tcp, udp 获取文件描述符
 	
 	struct eventpoll *ep = (struct eventpoll*)rte_malloc("eventpoll", sizeof(struct eventpoll), 0);
 	if (!ep) 
@@ -869,6 +875,7 @@ int nepoll_create(int size)
 	
 	ep->fd = epfd;
 	ep->rbcnt = 0;
+	//初始化红黑树
 	RB_INIT(&ep->rbr);
 	LIST_INIT(&ep->rdlist);
 

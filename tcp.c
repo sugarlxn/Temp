@@ -3,14 +3,14 @@
 //创建tcp连接条目 创建一条stream 通过四元组建立
 static struct tcp_stream * tcp_stream_create(uint32_t sip, uint32_t dip, uint16_t sport, uint16_t dport) 
 { 
-    char acBuf[32] = {0};
+    char acBufname[32] = {0}; //buffer name 
     unsigned int uiSeed;
     struct tcp_stream *pstStream = rte_malloc("tcp_stream", sizeof(struct tcp_stream), 0);
 	if (pstStream == NULL){ 
         return NULL;
 	}
 
-	printf("==========tcp_stream_create!==========\n");
+	
 	printf("tcp_stream_create!\n");
 
     pstStream->sip = sip;
@@ -21,11 +21,12 @@ static struct tcp_stream * tcp_stream_create(uint32_t sip, uint32_t dip, uint16_
     pstStream->fd = -1; //表示该连接未被使用 unused
     pstStream->status = TCP_STATUS_LISTEN;
 
-    sprintf(acBuf, "sndbuf%x%d", sip, sport);
-	pstStream->sndbuf = rte_ring_create(acBuf, D_RING_SIZE, rte_socket_id(), 0);
-	sprintf(acBuf, "rcvbuf%x%d", sip, sport);
-	pstStream->rcvbuf = rte_ring_create(acBuf, D_RING_SIZE, rte_socket_id(), 0);
-	printf("======================================\n");
+	//dpdk ring 要求ringbuffer的名字是唯一的
+    sprintf(acBufname, "sndbuf%x%d", sip, sport);
+	pstStream->sndbuf = rte_ring_create(acBufname, D_RING_SIZE, rte_socket_id(), 0);
+	sprintf(acBufname, "rcvbuf%x%d", sip, sport);
+	pstStream->rcvbuf = rte_ring_create(acBufname, D_RING_SIZE, rte_socket_id(), 0);
+
 
     // seq num
 	uiSeed = time(NULL);
@@ -72,7 +73,7 @@ static int ng_tcp_send_ackpkt(struct tcp_stream *pstStream, struct rte_tcp_hdr *
 
 	// remote
 	
-	printf("tcp_send_ackpkt: %d, %d\n", pstStream->rcv_nxt, pstStream->snd_nxt);
+	// printf("tcp_send_ackpkt: %d, %d\n", pstStream->rcv_nxt, pstStream->snd_nxt);
 	
 	pstAckFrag->acknum = pstStream->rcv_nxt;
 	pstAckFrag->seqnum = pstStream->snd_nxt;
@@ -101,7 +102,7 @@ static int ng_tcp_send_fin_ackpkt(struct tcp_stream *pstStream, struct rte_tcp_h
 
 	// remote
 	
-	printf("tcp_send_ackpkt: %d, %d\n", pstStream->rcv_nxt, ntohs(pstTcphdr->sent_seq));
+	// printf("tcp_send_ackpkt: %d, %d\n", pstStream->rcv_nxt, ntohs(pstTcphdr->sent_seq));
 	
 	pstAckFrag->acknum = pstStream->rcv_nxt;
 	pstAckFrag->seqnum = pstStream->snd_nxt;
@@ -139,10 +140,10 @@ static int tcp_handle_listen(struct tcp_stream *pstStream, struct rte_tcp_hdr *p
 
             struct in_addr addr;
 			addr.s_addr = pstSyn->sip;
-			printf("tcp ---> src: %s:%d ", inet_ntoa(addr), ntohs(pstTcphdr->src_port));
+			// printf("tcp ---> src: %s:%d ", inet_ntoa(addr), ntohs(pstTcphdr->src_port));
 
 			addr.s_addr = pstSyn->dip;
-			printf("  ---> dst: %s:%d \n", inet_ntoa(addr), ntohs(pstTcphdr->dst_port));
+			// printf("  ---> dst: %s:%d \n", inet_ntoa(addr), ntohs(pstTcphdr->dst_port));
 
             pstFragment->seqnum = pstSyn->snd_nxt;
 			pstFragment->acknum = ntohl(pstTcphdr->sent_seq) + 1;
@@ -195,9 +196,9 @@ static int tcp_handle_syn_rcvd(struct tcp_stream *pstStream, struct rte_tcp_hdr 
 			pthread_mutex_unlock(&pstListener->mutex);
 
 #if ENABLE_SINGLE_EPOLL
-
-			struct ng_tcp_table *table = tcpInstance();
-			epoll_event_callback(table->ep, listener->fd, EPOLLIN);
+			//轮询回调函数调用
+			struct tcp_table *table = tcpInstance();
+			epoll_event_callback(table->ep, pstListener->fd, EPOLLIN);
 #endif
 		}
 	}
@@ -248,9 +249,12 @@ static int ng_tcp_enqueue_recvbuffer(struct tcp_stream *pstStream, struct rte_tc
 	// 每一位表示4Byte，最大表示为 15*4Byte 大小
 	uint8_t hdrlen = pstTcphdr->data_off >> 4;   
 	int payloadlen = iTcplen - hdrlen * 4; // 数据域长度
+#if ENABLE_DEBUG
 	if (pstTcphdr->tcp_flags & RTE_TCP_FIN_FLAG) 
 		printf("iTcplen = %d\n", iTcplen);
 	printf("payloadlen = %d\n", payloadlen);
+#endif
+
 	if(payloadlen > 0)
 	{
 		uint8_t *payload = (uint8_t*)pstTcphdr + hdrlen * 4;
@@ -286,44 +290,45 @@ static int tcp_handle_established(struct tcp_stream *pstStream, struct rte_tcp_h
 {
 	if (pstTcphdr->tcp_flags & RTE_TCP_SYN_FLAG)  // 异常：收到对端的SYN重传包
 	{
-		printf("RTE_TCP_SYN_FLAG\n");
+		// printf("RTE_TCP_SYN_FLAG\n");
 	} 
 	if(pstTcphdr->tcp_flags & RTE_TCP_PSH_FLAG )  // 收到对端的数据包，TCP数据域不为0
 	{
-		printf("RTE_TCP_PSH_FLAG\n");
+		// printf("RTE_TCP_PSH_FLAG\n");
 		ng_tcp_enqueue_recvbuffer(pstStream, pstTcphdr, iTcplen);
 		
 #if ENABLE_SINGLE_EPOLL
-		struct ng_tcp_table *table = tcpInstance();
-		epoll_event_callback(table->ep, stream->fd, EPOLLIN);
+		//调用epoll回调函数
+		struct tcp_table * table = tcpInstance();
+		epoll_event_callback(table->ep, pstStream->fd, EPOLLIN);
 #endif
 
 		uint8_t hdrlen = pstTcphdr->data_off >> 4;
 		int payloadlen = iTcplen - hdrlen * 4;
 		
-		//NOTE 更新rcv_nxt snd_nxt 
+		//更新rcv_nxt snd_nxt 
 		pstStream->rcv_nxt = pstStream->rcv_nxt + payloadlen;
 		pstStream->snd_nxt = ntohl(pstTcphdr->recv_ack);
 		
 		ng_tcp_send_ackpkt(pstStream, pstTcphdr);
 	}
-	//FIXME 
+	
 	if(pstTcphdr->tcp_flags & RTE_TCP_ACK_FLAG)  //异常
 	{
-		printf("RTE_TCP_ACK_FLAG\n");
+		// printf("RTE_TCP_ACK_FLAG\n");
 	
 	}
 	if (pstTcphdr->tcp_flags & RTE_TCP_FIN_FLAG)  // 对端关闭连接
 	{
-		printf("RTE_TCP_FIN_FLAG\n");
+		// printf("RTE_TCP_FIN_FLAG\n");
 		pstStream->status = TCP_STATUS_CLOSE_WAIT;
 
 		ng_tcp_enqueue_recvbuffer(pstStream, pstTcphdr, pstTcphdr->data_off >> 4);
 
 #if ENABLE_SINGLE_EPOLL
-
-		struct ng_tcp_table *table = tcpInstance();
-		epoll_event_callback(table->ep, stream->fd, EPOLLIN);
+		//回调函数
+		struct tcp_table *table = tcpInstance();
+		epoll_event_callback(table->ep, pstStream->fd, EPOLLIN);
 
 #endif
 		// send ack ptk
@@ -356,7 +361,7 @@ static int tcp_hadle_fin_wait_2(struct tcp_stream * pstTcpStream,struct rte_tcp_
 			pstTcpStream->rcv_nxt = pstTcpStream->rcv_nxt+1; 
 			pstTcpStream->snd_nxt = pstTcpStream->snd_nxt+1;
 			int ret = ng_tcp_send_ackpkt(pstTcpStream, pstTcpHdr);
-			printf("ret=%d\n",ret);
+			// printf("ret=%d\n",ret);
 			
 			//FIXME 等待2MSL
 
@@ -468,16 +473,16 @@ int tcp_process(struct rte_mbuf *pstTcpMbuf)
 		{ 
 			int tcplen = ntohs(pstIpHdr->total_length) - sizeof(struct rte_ipv4_hdr);
 			tcp_handle_established(pstTcpStream, pstTcpHdr, tcplen);
-			printf("tcplen = %d\n", tcplen);
+			// printf("tcplen = %d\n", tcplen);
 			break;
 		}
 		case TCP_STATUS_FIN_WAIT_1: //  ~client
-			printf("tcp_handle_fin_wait_1\n");
+			// printf("tcp_handle_fin_wait_1\n");
 			tcp_hadle_fin_wait_1(pstTcpStream, pstTcpHdr);
 			break;
 			
 		case TCP_STATUS_FIN_WAIT_2: // ~client
-			printf("tcp_handle_fin_wait_2\n");
+			// printf("tcp_handle_fin_wait_2\n");
 			tcp_hadle_fin_wait_2(pstTcpStream, pstTcpHdr);
 			break;
 			
@@ -496,7 +501,8 @@ int tcp_process(struct rte_mbuf *pstTcpMbuf)
 			tcp_handle_last_ack(pstTcpStream, pstTcpHdr);
 			break;
     }
-
+	//释放mbuf
+	rte_pktmbuf_free(pstTcpMbuf);
     return 0;
 }
 
@@ -591,7 +597,7 @@ int tcp_out(struct rte_mempool *pstMbufPool)
 		struct in_addr addr;
 		addr.s_addr = pstStream->sip;
 
-		printf("tcp_out ---> dst: %s:%d \n", inet_ntoa(addr), ntohs(pstFragment->dport));
+		// printf("tcp_out ---> dst: %s:%d \n", inet_ntoa(addr), ntohs(pstFragment->dport));
 
 		
 		uint8_t *dstmac = ng_get_dst_macaddr(pstStream->sip); //这里的源ip指的是对端ip 

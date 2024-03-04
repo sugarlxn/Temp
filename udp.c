@@ -13,8 +13,9 @@ int udp_process(struct rte_mbuf *pstUdpMbuf)
 
 	struct in_addr addr;
 	addr.s_addr = pstIpHdr->src_addr;
+#if ENABLE_DEBUG
 	printf("udp_process ---> src: %s:%d \n", inet_ntoa(addr), ntohs(pstUdpHdr->src_port));
-	
+#endif
     pstHost = get_hostinfo_fromip_port(pstIpHdr->dst_addr, pstUdpHdr->dst_port, pstIpHdr->next_proto_id);
     if (pstHost == NULL) 
     {
@@ -52,6 +53,7 @@ int udp_process(struct rte_mbuf *pstUdpMbuf)
 	pthread_cond_signal(&pstHost->cond);
 	pthread_mutex_unlock(&pstHost->mutex);
 
+	//释放mbuf
 	rte_pktmbuf_free(pstUdpMbuf);
 
     return 0;
@@ -134,8 +136,9 @@ int udp_out(struct rte_mempool *pstMbufPool)
         
         struct in_addr addr;
 		addr.s_addr = pstOffLoad->dip;
+#if ENABLE_DEBUG
 		printf("udp_out ---> src: %s:%d \n", inet_ntoa(addr), ntohs(pstOffLoad->dport));
-
+#endif
         unsigned char *dstmac = ng_get_dst_macaddr(pstOffLoad->dip); // 查询对端mac地址
 		if (dstmac == NULL)  // 先广播发个arp包确定对端mac地址
         {
