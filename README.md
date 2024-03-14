@@ -15,17 +15,25 @@ Simple protocol stack based on dpdk（使用dpdk搭建协议栈）
 
 本项目要完成的工作如下：
 1. dpdk相关配置
-2. 实现协议栈，主要针对TCP与UDP，包含三次握手、四次挥手
+2. 实现协议栈，主要针对TCP与UDP，包含三次握手、四次挥手、TCP滑动窗口、超时重传
 3. 实现服务端socket系统调用api：socket、bind、listen、accept、recv、send、recvfrom、sendto、recv、send、close
-4. 实现epoll多线程
+4. 实现epoll多线程，接口
 
 ## 使用
-1. 环境：安装dpdp-19.08，多队列网卡
-2. make clean;make
-3. sh run.sh
+环境：安装dpdp-19.08，多队列网卡，配置好dpdk驱动
+
+注意：加入权限：`sudo su `
+```shell
+make clean;make
+sh run.sh
+```
 
 ## 测试
-1. 在虚拟机中执行该代码
-2. windows中可以使用类似网络调试助手的工具软件给虚拟机发送tcp/udp数据包
+```shell
+./build/test
+```
+windows中可以使用类似网络调试助手的工具软件给虚拟机发送tcp/udp数据包
 测试时，需要在客户端增加一条arp表项，目的是为了客户端能根据mac地址将数据包发送至服务端
 
+## 其他
+- 本项目在持续开发、优化中o(*￣▽￣*)ブ
