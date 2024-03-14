@@ -20,7 +20,7 @@ Simple protocol stack based on dpdk（使用dpdk搭建协议栈）
 4. 实现epoll多线程，接口
 
 ## 使用
-环境：安装dpdp-19.08，多队列网卡，配置好dpdk驱动
+环境：安装dpdp-19.08 or dpdk-19.11，多队列网卡，配置好dpdk驱动
 
 注意：加入权限：`sudo su `
 ```shell
