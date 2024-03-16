@@ -215,12 +215,27 @@ static int pkt_process(void *arg)
 		//处理kni handle请求
 		rte_kni_handle_request(g_pstKni);
 
-        // to send
-        udp_out(pstMbufPool);
-        tcp_out(pstMbufPool);
+		//窗口管理
+#if ENABLE_WINDOW_MANAGE
+		tcp_window_handle(NULL);
+#endif
+
+
     }
     return 0;
 }
+
+int pkg_out(void *arg){
+	struct rte_mempool *pstMbufPool;
+	pstMbufPool = (struct rte_mempool *)arg;
+	while(1){
+		udp_out(pstMbufPool);
+		tcp_out(pstMbufPool);
+	}
+	return 0;
+}
+
+
 //NOTE UDP服务器入口程序
 int udp_server_entry(__attribute__((unused))  void *arg) 
 {           
@@ -240,7 +255,7 @@ int udp_server_entry(__attribute__((unused))  void *arg)
 
 	stLocalAddr.sin_port = htons(8889);
 	stLocalAddr.sin_family = AF_INET;
-	stLocalAddr.sin_addr.s_addr = inet_addr("172.28.106.131"); 
+	stLocalAddr.sin_addr.s_addr = inet_addr("172.18.122.216"); 
 	// stLocalAddr.sin_addr.s_addr = htonl(INADDR_ANY); 
 
 	
@@ -325,12 +340,13 @@ int tcp_server_entry(__attribute__((unused))  void *arg)
 				if (n > 0) 
 				{
 					// printf(" epoll tcp server --> recv: %s\n", buff);
+					//业务代码
 					nsend(fd, buff, n, 0);
 					++tcp_pkt_count;
 				} 
 				else 
 				{
-					printf("error: %s\n", strerror(errno));
+					printf("recv length <= 0 close stream: %s\n", strerror(errno));
 					nepoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
 					nclose(fd);
 				} 
@@ -482,9 +498,15 @@ static void timer0_cb(__attribute__((unused)) struct rte_timer *timer, __attribu
 
 #if ENABLE_WINDOW_MANAGE
 	//获取当前定时器时间
-	uint32_t time = 200;
-	//滑动窗口管理
-	tcp_window_handle(time);
+	uint32_t time = 100;
+	//TODO超时重传管理
+	struct tcp_table *pst_tcp_table = tcpInstance();
+	struct tcp_stream *pst_stream = pst_tcp_table->tcb_set;
+	//int tcp_retransmission(struct tcp_stream *pstStream, int time);
+	while (pst_stream != NULL){
+		tcp_retransmission(pst_stream, time);
+		pst_stream = pst_stream->next;		
+	} 
 
 #endif
 
@@ -659,14 +681,18 @@ int main(int argc, char *argv[])
 	//NOTE 启动TCP服务器线程
     uiCoreId = rte_get_next_lcore(uiCoreId, 1, 0);
     rte_eal_remote_launch(tcp_server_entry, pstMbufPoolPub, uiCoreId);
-	
+
+	//NOTE 启动pkg_out线程
+	uiCoreId = rte_get_next_lcore(uiCoreId, 1, 0);
+	rte_eal_remote_launch(pkg_out, pstMbufPoolPub, uiCoreId);
+
 	// NOTE 启动TCP客户端线程
 	// uiCoreId = rte_get_next_lcore(uiCoreId, 1, 0);
 	// rte_eal_remote_launch(tcp_client_entry, pstMbufPoolPub, uiCoreId);
 
-	//hz为定时器一秒的tick总数，所以hz/5为0.2秒的tick总数 200ms
+	//hz为定时器一秒的tick总数，所以hz的tick总数,时间为 100ms
 	uiCoreId = rte_get_next_lcore(uiCoreId, 1, 0);
-	rte_timer_reset(&timer0, hz/5, PERIODICAL, uiCoreId, timer0_cb, pstMbufPoolPub);
+	rte_timer_reset(&timer0, hz/10, PERIODICAL, uiCoreId, timer0_cb, pstMbufPoolPub);
 	uiCoreId = rte_get_next_lcore(uiCoreId, 1, 0);
 	rte_timer_reset(&timer1, hz, PERIODICAL, uiCoreId, timer1_cb, pstMbufPoolPub);
 

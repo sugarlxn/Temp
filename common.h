@@ -27,8 +27,9 @@
 #include <rte_log.h>
 #include <rte_kni.h>
 
+//dpdk端口id
 #define   D_PORT_ID           0
-
+//dpdk最大数据包大小
 #define   D_MAX_PACKET_SIZE   2048
 #define   D_RING_SIZE         1024
 #define   D_BURST_SIZE        32
@@ -43,7 +44,7 @@
 #define   D_TCP_INITIAL_WINDOW  14600
 #define   D_TCP_MAX_SEQ		    0xffffffff
 #define   D_TCP_BUFFER_SIZE  1024
-#define   D_TCP_RETRANSMISSION_TIMEOUT 1000  //单位ms，此时是1s
+#define   D_TCP_RETRANSMISSION_TIMEOUT 10000  //单位ms，此时是10s
 
 //timer相关 电脑cpu主频为1.8Ghz =1.8 * 10^9= 1 800 000 000Hz = 1s
 #define   TIMER_RESOLUTION_CYCLES 180000000ULL //目前是100ms

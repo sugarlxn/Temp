@@ -307,9 +307,9 @@ int nsocket(__attribute__((unused)) int domain, int type, __attribute__((unused)
     else if(type == SOCK_STREAM) // tcp
     {
         struct tcp_stream *pstStream = rte_malloc("tcp_stream", sizeof(struct tcp_stream), 0);
-		if (pstStream == NULL) 
+		if (pstStream == NULL){ 
 			return -1;
-		
+		}
 		memset(pstStream, 0, sizeof(struct tcp_stream));
         pstStream->fd = iFd;
         pstStream->protocol = IPPROTO_TCP;
@@ -349,9 +349,9 @@ int nbind(int sockfd, const struct sockaddr *addr, __attribute__((unused))  sock
     void *info = NULL;
 
     info = get_hostinfo_fromfd(sockfd);
-    if(info == NULL) 
+    if(info == NULL){ 
         return -1;
-
+	}
     struct localhost *pstHostInfo = (struct localhost *)info;
     if(pstHostInfo->protocol == IPPROTO_UDP)
     {
@@ -493,9 +493,10 @@ ssize_t nsend(int sockfd, const void *buf, size_t len, __attribute__((unused)) i
     unsigned int uiLength = 0;
 	//根据fd获取hostinfo
     void *pstHostInfo = get_hostinfo_fromfd(sockfd);
-	if (pstHostInfo == NULL) 
+	if (pstHostInfo == NULL){
         return -1;
-	
+	}
+
 	struct tcp_stream *pstStream = (struct tcp_stream *)pstHostInfo;
     if(pstStream->protocol == IPPROTO_TCP)
     {
@@ -508,6 +509,7 @@ ssize_t nsend(int sockfd, const void *buf, size_t len, __attribute__((unused)) i
 		memset(pstFragment, 0, sizeof(struct tcp_fragment));
         pstFragment->dport = pstStream->sport;
 		pstFragment->sport = pstStream->dport;
+		//FIXME 这里的seq 和 ack 更新方式待完善
 		pstFragment->acknum = pstStream->rcv_nxt;
 		pstFragment->seqnum = pstStream->snd_nxt;
 		pstFragment->tcp_flags = RTE_TCP_ACK_FLAG | RTE_TCP_PSH_FLAG;
@@ -539,6 +541,7 @@ ssize_t nsend(int sockfd, const void *buf, size_t len, __attribute__((unused)) i
 #endif
 		if(ret < 0){
 			printf("rte_ring_mp_enqueue fail! ret = %d\n", ret);
+			return -1;
 		}
     }
 

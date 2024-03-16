@@ -51,6 +51,7 @@ static struct tcp_stream * tcp_stream_create(uint32_t sip, uint32_t dip, uint16_
 		printf("tcp_stream_create window malloc failed\n");
 		rte_ring_free(pstStream->sndbuf);
 		rte_ring_free(pstStream->rcvbuf);
+		rte_ring_free(pstStream->windbuf);
 		rte_free(pstStream);
 		return NULL;
 	}
@@ -62,24 +63,29 @@ static struct tcp_stream * tcp_stream_create(uint32_t sip, uint32_t dip, uint16_
     return pstStream;
 }
 
-//tcp协议发送ack包 数据部分为空
-static int ng_tcp_send_ackpkt(struct tcp_stream *pstStream, struct rte_tcp_hdr *pstTcphdr) 
+//tcp协议发送ack包 数据部分为空, 如果payloadlen > 0，则回复数据包的ACK, 如果payloadlen = -1，则回复握手或者挥手的ACK
+static int ng_tcp_send_ackpkt(struct tcp_stream *pstStream, struct rte_tcp_hdr *pstTcphdr, int payloadlen) 
 {
 	struct tcp_fragment *pstAckFrag = rte_malloc("tcp_fragment", sizeof(struct tcp_fragment), 0);
 	if (pstAckFrag == NULL){
 		return -1;
 	}
-	
+
 	memset(pstAckFrag, 0, sizeof(struct tcp_fragment));
 	pstAckFrag->dport = pstTcphdr->src_port;
 	pstAckFrag->sport = pstTcphdr->dst_port;
 
 	// remote
-	
-	// printf("tcp_send_ackpkt: %d, %d\n", pstStream->rcv_nxt, pstStream->snd_nxt);
-	
+
 	pstAckFrag->acknum = pstStream->rcv_nxt;
-	pstAckFrag->seqnum = pstStream->snd_nxt;
+	if(payloadlen > 0)
+	{
+		pstAckFrag->seqnum = ntohl(pstTcphdr->recv_ack);
+	}
+	else
+	{
+		pstAckFrag->seqnum = pstStream->snd_nxt;
+	}
 	pstAckFrag->tcp_flags = RTE_TCP_ACK_FLAG;
 	pstAckFrag->windows = D_TCP_INITIAL_WINDOW;
 	pstAckFrag->hdrlen_off = 0x50;
@@ -148,9 +154,9 @@ static int tcp_handle_listen(struct tcp_stream *pstStream, struct rte_tcp_hdr *p
 			addr.s_addr = pstSyn->dip;
 			// printf("  ---> dst: %s:%d \n", inet_ntoa(addr), ntohs(pstTcphdr->dst_port));
 
-            pstFragment->seqnum = pstSyn->snd_nxt;
-			pstFragment->acknum = ntohl(pstTcphdr->sent_seq) + 1;
-			pstSyn->rcv_nxt = pstFragment->acknum;
+            pstFragment->seqnum = pstSyn->snd_nxt;//此时seqnum为随机数
+			pstFragment->acknum = ntohl(pstTcphdr->sent_seq) + 1;//此时my ack 为 收到的客户端syn的seq+1
+			pstSyn->rcv_nxt = pstFragment->acknum;//更新到pststream中acknum
 			
 			pstFragment->tcp_flags = (RTE_TCP_SYN_FLAG | RTE_TCP_ACK_FLAG);
 			pstFragment->windows = D_TCP_INITIAL_WINDOW;
@@ -178,10 +184,13 @@ static int tcp_handle_syn_rcvd(struct tcp_stream *pstStream, struct rte_tcp_hdr 
 			if (acknum == pstStream->snd_nxt + 1) 
 			{
 				printf("ack response success!\n");
+				//更新pststream的snd_nxt 即 seq num
+				pstStream->snd_nxt += 1;
 			}
 			else
 			{
 				printf("ack response error! \n");
+				return -1;
 			}
 
 			pstStream->status = TCP_STATUS_ESTABLISHED;
@@ -221,10 +230,10 @@ static int tcp_handle_syn_sent(struct tcp_stream * pstTcpStream, struct rte_tcp_
 				printf("ack response error! \n");
 			}
 
-			pstTcpStream->snd_nxt = ntohl(pstTcpHdr->recv_ack);
+			pstTcpStream->snd_nxt += 1;
 			pstTcpStream->rcv_nxt = ntohl(pstTcpHdr->sent_seq) + 1;
 			//发送ack
-			ng_tcp_send_ackpkt(pstTcpStream, pstTcpHdr);
+			ng_tcp_send_ackpkt(pstTcpStream, pstTcpHdr, -1);
 
 			pstTcpStream->status = TCP_STATUS_ESTABLISHED;
 
@@ -297,6 +306,8 @@ static int tcp_handle_established(struct tcp_stream *pstStream, struct rte_tcp_h
 	} 
 	if(pstTcphdr->tcp_flags & RTE_TCP_PSH_FLAG )  // 收到对端的数据包，TCP数据域不为0
 	{
+
+
 		// printf("RTE_TCP_PSH_FLAG\n");
 		ng_tcp_enqueue_recvbuffer(pstStream, pstTcphdr, iTcplen);
 		
@@ -305,15 +316,13 @@ static int tcp_handle_established(struct tcp_stream *pstStream, struct rte_tcp_h
 		struct tcp_table * table = tcpInstance();
 		epoll_event_callback(table->ep, pstStream->fd, EPOLLIN);
 #endif
-
+		//收到ACK更新rcv_nxt snd_nxt 
 		uint8_t hdrlen = pstTcphdr->data_off >> 4;
 		int payloadlen = iTcplen - hdrlen * 4;
-		
-		//更新rcv_nxt snd_nxt 
 		pstStream->rcv_nxt = pstStream->rcv_nxt + payloadlen;
 		pstStream->snd_nxt = ntohl(pstTcphdr->recv_ack);
+		ng_tcp_send_ackpkt(pstStream, pstTcphdr, payloadlen);
 		
-		ng_tcp_send_ackpkt(pstStream, pstTcphdr);
 	}
 	
 	if(pstTcphdr->tcp_flags & RTE_TCP_ACK_FLAG)  //收到对端的ACK包，ACK有效标志
@@ -322,7 +331,7 @@ static int tcp_handle_established(struct tcp_stream *pstStream, struct rte_tcp_h
 
 #if ENABLE_WINDOW_MANAGE
 		//TODO 窗口管理释放窗口头部数据包
-		int ret = window_link_popfront(pstStream->window, pstTcphdr);
+		int ret = window_link_popfront(pstStream, pstTcphdr);
 
 #endif
 
@@ -345,8 +354,30 @@ static int tcp_handle_established(struct tcp_stream *pstStream, struct rte_tcp_h
 		pstStream->rcv_nxt = (pstStream->rcv_nxt + 1);
 		pstStream->snd_nxt = ntohl(pstTcphdr->recv_ack);
 		
-		ng_tcp_send_ackpkt(pstStream, pstTcphdr);
+		ng_tcp_send_ackpkt(pstStream, pstTcphdr, -1);
 		
+	}
+
+	if(pstTcphdr->tcp_flags & RTE_TCP_RST_FLAG)  // 收到对端的RST包
+	{
+		// printf("RTE_TCP_RST_FLAG\n");
+		//重置该tcpstream
+		pstStream->status = TCP_STATUS_CLOSED;
+		LL_REMOVE(pstStream, g_pstTcpTbl->tcb_set);
+		nepoll_ctl(pstStream->fd, EPOLL_CTL_DEL, pstStream->fd, NULL);
+		set_fd_frombitmap(pstStream->fd);
+		//释放资源
+		//释放动态窗口
+#if ENABLE_WINDOW_MANAGE
+		free_window_link(pstStream);
+#endif
+		rte_ring_free(pstStream->sndbuf);
+		rte_ring_free(pstStream->rcvbuf);
+		rte_ring_free(pstStream->windbuf);
+		rte_free(pstStream->window);
+		rte_free(pstStream);
+		printf("tcp RST stream==>tcp stream close!\n");
+
 	}
 
 	return 0;
@@ -371,11 +402,10 @@ static int tcp_hadle_fin_wait_2(struct tcp_stream * pstTcpStream,struct rte_tcp_
 			//发送ACK
 			pstTcpStream->rcv_nxt = pstTcpStream->rcv_nxt+1; 
 			pstTcpStream->snd_nxt = pstTcpStream->snd_nxt+1;
-			int ret = ng_tcp_send_ackpkt(pstTcpStream, pstTcpHdr);
+			int ret = ng_tcp_send_ackpkt(pstTcpStream, pstTcpHdr, -1);
 			// printf("ret=%d\n",ret);
 			
 			//FIXME 等待2MSL
-
 
 			pstTcpStream->status = TCP_STATUS_CLOSING;
 			//唤醒nclose_tcp_client中的等待
@@ -416,14 +446,19 @@ static int tcp_handle_last_ack(struct tcp_stream *stream, struct rte_tcp_hdr *tc
 		if (stream->status == TCP_STATUS_LAST_ACK) 
 		{
 			stream->status = TCP_STATUS_CLOSED;
-			printf("tcp_handle_last_ack stream close\n");
 			
 			LL_REMOVE(stream, g_pstTcpTbl->tcb_set);
 			//释放资源
+			//TODO 释放动态窗口
+#if ENABLE_WINDOW_MANAGE
+			free_window_link(stream);
+#endif
 			rte_ring_free(stream->sndbuf);
 			rte_ring_free(stream->rcvbuf);
+			rte_ring_free(stream->windbuf);
 			rte_free(stream->window);
 			rte_free(stream);
+			printf("tcp_handle_last_ack stream close\n");
 		}
 	}
 
@@ -565,7 +600,7 @@ static int ng_encode_tcp_apppkt(uint8_t *msg, uint32_t sip, uint32_t dip,
 	return 0;
 }
 
-
+//构造tcp网络数据包
 static struct rte_mbuf * ng_tcp_pkt(struct rte_mempool *mbuf_pool, uint32_t sip, uint32_t dip,
 	uint8_t *srcmac, uint8_t *dstmac, struct tcp_fragment *fragment) 
 {
@@ -653,7 +688,8 @@ int tcp_out(struct rte_mempool *pstMbufPool)
 
 #if ENABLE_WINDOW_MANAGE
 //TODO tcp接收窗口管理函数-popfront
-int window_link_popfront(struct tcp_window *window, struct rte_tcp_hdr *pstTcphdr){
+int window_link_popfront(struct tcp_stream *pststream, struct rte_tcp_hdr *pstTcphdr){
+	struct tcp_window *window = pststream->window;
 	//检查window节点是否存在tcphdr 的 acknum
 	if(window->head == NULL){ //若窗口为空则返回
 		return -1;
@@ -662,8 +698,9 @@ int window_link_popfront(struct tcp_window *window, struct rte_tcp_hdr *pstTcphd
 	struct tcp_packet_node* packet_node =NULL;
 	while(tcpwindow->head != NULL){
 		packet_node=tcpwindow->head;
+		//遍历窗口链表，释放窗口头部数据包
 		uint32_t mysequce =packet_node->fragment->seqnum + packet_node->fragment->length;
-		if(mysequce < ntohl(pstTcphdr->recv_ack)){
+		if(mysequce <= pststream->rcv_nxt){
 			//释放数据包
 			tcpwindow->window_used -= packet_node->fragment->length;
 
@@ -711,11 +748,29 @@ int window_link_pushback(struct tcp_window *window, struct tcp_fragment *fragmen
 }
 
 //重传机制实现
-int tcp_retransmission(struct tcp_stream *pstStream){
+int tcp_retransmission(struct tcp_stream *pstStream, int time){
+
+	if (pstStream->window == NULL)
+	{
+		return -1;
+	}
+	
+	//超时时间管理
+	if(pstStream->window->window_used > 0){
+		//定时器时间自增
+		pstStream->window->timeout += time;
+	}else{
+		pstStream->window->timeout = 0;
+	}
+
 	//判断超时时间大小
 	if(pstStream->window->timeout > D_TCP_RETRANSMISSION_TIMEOUT){
+		int n = 3;
+#if ENABLE_DEBUG
+		printf("time out...retransimission %d pakets\n",n);
+#endif
+		printf("time out...retransimission pakets......\n",n);
 		//重传n帧
-		int n = 5;
 		struct tcp_window * tcpwindow = pstStream->window;
 		struct tcp_packet_node* packet_node = tcpwindow->head;
 		for(;packet_node!=NULL;packet_node=packet_node->next){
@@ -733,19 +788,45 @@ int tcp_retransmission(struct tcp_stream *pstStream){
 	return 0;
 }
 
+//返回0成功，-1失败, 释放滑动窗口链表节点
+int free_window_link(struct tcp_stream * pst_stream){
+	//释放窗口链表
+	struct tcp_window * pstwindow = pst_stream->window;
+	struct tcp_packet_node* packet_node = pstwindow->head;
+	//如果窗口为空
+	if(packet_node == NULL){
+		return 0;
+	}
+	//释放widow_link里面的所有节点
+	while(pstwindow->head!=NULL){
+		packet_node=pstwindow->head;
+		pstwindow->head=pstwindow->head->next;
+		//释放数据包
+		if(packet_node->fragment->data != NULL){
+			rte_free(packet_node->fragment->data);
+		}
+		rte_free(packet_node->fragment);
+		rte_free(packet_node);
+	}
+	pstwindow->head=NULL;
+	pstwindow->tail=NULL;
+	return 0;
+	
+}
+
 //TODO tcp 发送窗口管理函数 使用定时器轮询调用
-int tcp_window_handle(uint32_t time){
+int tcp_window_handle(__attribute__((unused))  void *arg){
 	
 	//获取tcp stream set
 	struct tcp_table *pstTable = tcpInstance();	
 	struct tcp_stream *pstStream = NULL;
 	//遍历每个tcp stream
+
 	for (pstStream = pstTable->tcb_set;pstStream != NULL; pstStream = pstStream->next){
 		//一个半连接 listener fd 没有sndbuf 和 recvbuf
 		if(pstStream->sndbuf == NULL){
 			continue;
 		}
-
 		//超时时间管理
 		if (pstStream->window == NULL)
 		{
@@ -754,17 +835,9 @@ int tcp_window_handle(uint32_t time){
 #if ENABLE_DEBUG
 		printf("window_used:%d\n",pstStream->window->window_used);
 #endif
-		if(pstStream->window->window_used > 0){
-			//定时器时间自增
-			pstStream->window->timeout += time;
-		}else{
-			//重置超时时间
-			pstStream->window->timeout = 0;
-		}
+		
 
-		//重传机制
-		tcp_retransmission(pstStream);
-		//FIXME 窗口管理	
+		// 窗口管理	
 		while(pstStream->window->window_used < pstStream->window->window_size){
 			//从windbuf中取出数据de_queue
 			struct tcp_fragment *pstFragment = NULL;
@@ -774,6 +847,7 @@ int tcp_window_handle(uint32_t time){
 			}
 			//查看pststream中的可用窗口大小
 			uint32_t window_size_invalid = pstStream->window->window_size - pstStream->window->window_used;
+			printf("window_used:%d\n",pstStream->window->window_used);
 			//如果pststream中的可用窗口大小大于pstfragment的大小
 			if(window_size_invalid > pstFragment->length){
 				//发送数据包
@@ -791,7 +865,6 @@ int tcp_window_handle(uint32_t time){
 		}
 	}
 	
-
 	return 0;
 }
 

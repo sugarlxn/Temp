@@ -3,12 +3,13 @@
 
 #include "common.h"
 
+//TCP header
 int tcp_process(struct rte_mbuf *pstTcpMbuf);
 int tcp_out(struct rte_mempool *pstMbufPool);
-//send window management packet
-// int window_link_pushback(struct tcp_window *window, struct tcp_fragment *fragment);
-// int window_link_popfront(struct tcp_window *window, struct rte_tcp_hdr *pstTcphdr);
-int tcp_window_handle(uint32_t time);
+//TCP window management
+int tcp_window_handle(__attribute__((unused))  void *arg);
+int tcp_retransmission(struct tcp_stream *pstStream, int time);
+int free_window_link(struct tcp_stream * pst_stream);
 
 // 11种tcp连接状态
 typedef enum _ENUM_TCP_STATUS 
@@ -44,8 +45,8 @@ struct tcp_stream
 	uint16_t sport;
 	uint32_t sip;
 
-	uint32_t snd_nxt; // seqnum
-	uint32_t rcv_nxt; // acknum
+	uint32_t snd_nxt; //my seqnum
+	uint32_t rcv_nxt; //my acknum
 	//11种状态
 	TCP_STATUS status;
 
