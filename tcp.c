@@ -11,7 +11,7 @@ static struct tcp_stream * tcp_stream_create(uint32_t sip, uint32_t dip, uint16_
 	}
 
 	
-	printf("tcp_stream_create!\n");
+	// printf("tcp_stream_create!\n");
 
     pstStream->sip = sip;
     pstStream->dip = dip;
@@ -612,8 +612,9 @@ static struct rte_mbuf * ng_tcp_pkt(struct rte_mempool *mbuf_pool, uint32_t sip,
 							fragment->optlen * sizeof(uint32_t) + fragment->length;  
 	
 	pstMbuf = rte_pktmbuf_alloc(mbuf_pool);
-    if (!pstMbuf) 
-		rte_exit(EXIT_FAILURE, "rte_pktmbuf_alloc\n");
+    if (!pstMbuf){ 
+		rte_exit(EXIT_FAILURE, "rte_pktmbuf_alloc ng_tcp_pkt\n");
+	}
 	
 	pstMbuf->pkt_len = uiTotalLen;
     pstMbuf->data_len = uiTotalLen;
@@ -768,8 +769,8 @@ int tcp_retransmission(struct tcp_stream *pstStream, int time){
 		int n = 3;
 #if ENABLE_DEBUG
 		printf("time out...retransimission %d pakets\n",n);
-#endif
 		printf("time out...retransimission pakets......\n",n);
+#endif
 		//重传n帧
 		struct tcp_window * tcpwindow = pstStream->window;
 		struct tcp_packet_node* packet_node = tcpwindow->head;
@@ -847,7 +848,8 @@ int tcp_window_handle(__attribute__((unused))  void *arg){
 			}
 			//查看pststream中的可用窗口大小
 			uint32_t window_size_invalid = pstStream->window->window_size - pstStream->window->window_used;
-			printf("window_used:%d\n",pstStream->window->window_used);
+
+			//  printf("window_used:%d\n",pstStream->window->window_used);
 			//如果pststream中的可用窗口大小大于pstfragment的大小
 			if(window_size_invalid > pstFragment->length){
 				//发送数据包

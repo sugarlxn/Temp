@@ -37,7 +37,7 @@
 #define   D_DEFAULT_FD_NUM	  3
 #define   D_MAX_FD_COUNT	  1024
 
-#define   D_NUM_MBUFS               (4096-1)
+#define   D_NUM_MBUFS        (4096-1)
 #define   D_UDP_BUFFER_SIZE	 1024
 
 #define   D_TCP_OPTION_LENGTH	10

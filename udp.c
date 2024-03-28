@@ -111,7 +111,7 @@ static struct rte_mbuf * ng_udp_pkt(struct rte_mempool *mbuf_pool, uint32_t sip,
     uiTotalLen = length + 42;   // 42 = eth + ip
     pstMbuf = rte_pktmbuf_alloc(mbuf_pool);
     if (!pstMbuf){ 
-		rte_exit(EXIT_FAILURE, "rte_pktmbuf_alloc\n");
+		rte_exit(EXIT_FAILURE, "rte_pktmbuf_alloc ng_udp_pkt error\n");
 	}
 	
     pstMbuf->pkt_len = uiTotalLen;

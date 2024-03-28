@@ -255,7 +255,7 @@ int udp_server_entry(__attribute__((unused))  void *arg)
 
 	stLocalAddr.sin_port = htons(8889);
 	stLocalAddr.sin_family = AF_INET;
-	stLocalAddr.sin_addr.s_addr = inet_addr("172.18.122.216"); 
+	stLocalAddr.sin_addr.s_addr = inet_addr("10.0.0.1"); 
 	// stLocalAddr.sin_addr.s_addr = htonl(INADDR_ANY); 
 
 	
@@ -346,7 +346,7 @@ int tcp_server_entry(__attribute__((unused))  void *arg)
 				} 
 				else 
 				{
-					printf("recv length <= 0 close stream: %s\n", strerror(errno));
+					// printf("recv length <= 0 close stream: %s\n", strerror(errno));
 					nepoll_ctl(epfd, EPOLL_CTL_DEL, fd, NULL);
 					nclose(fd);
 				} 
@@ -602,8 +602,9 @@ int main(int argc, char *argv[])
 	signal(SIGINT, SIGNAI_INT_HANDLER);
 
 	//DPDK环境初始化
-    if(rte_eal_init(argc, argv) < 0)
-	    rte_exit(EXIT_FAILURE, "Error with EAL init\n");	
+    if(rte_eal_init(argc, argv) < 0){
+	    rte_exit(EXIT_FAILURE, "Error with EAL init\n");
+	}	
 
     pstMbufPoolPub = rte_pktmbuf_pool_create("MBUF_POOL_PUB", D_NUM_MBUFS, 0, 0, 
         RTE_MBUF_DEFAULT_BUF_SIZE, rte_socket_id());
@@ -661,8 +662,9 @@ int main(int argc, char *argv[])
 	uiCoreId = rte_lcore_id();
 
     pstRing = ringInstance();
-	if(pstRing == NULL) 
+	if(pstRing == NULL){
 		rte_exit(EXIT_FAILURE, "ring buffer init failed\n");
+	}
 
 	//设置IN、OUT队列，将网卡的收发数据包存入队列
     pstRing->pstInRing = rte_ring_create("in ring", D_RING_SIZE, rte_socket_id(), RING_F_SP_ENQ | RING_F_SC_DEQ);
@@ -693,15 +695,19 @@ int main(int argc, char *argv[])
 	//hz为定时器一秒的tick总数，所以hz的tick总数,时间为 100ms
 	uiCoreId = rte_get_next_lcore(uiCoreId, 1, 0);
 	rte_timer_reset(&timer0, hz/10, PERIODICAL, uiCoreId, timer0_cb, pstMbufPoolPub);
+	rte_eal_remote_launch(lcore_mainloop, NULL, uiCoreId);
 	uiCoreId = rte_get_next_lcore(uiCoreId, 1, 0);
 	rte_timer_reset(&timer1, hz, PERIODICAL, uiCoreId, timer1_cb, pstMbufPoolPub);
+	rte_eal_remote_launch(lcore_mainloop, NULL, uiCoreId);
 
 	/* call lcore_mainloop() on every slave lcore */
-	// RTE_LCORE_FOREACH_SLAVE只会历遍所有的slave核，不包括master核
-	uiCoreId = rte_get_next_lcore(uiCoreId, 1, 0);
-	RTE_LCORE_FOREACH_SLAVE(uiCoreId) {
-		rte_eal_remote_launch(lcore_mainloop, NULL, uiCoreId);
-	}
+	/*RTE_LCORE_FOREACH_SLAVE只会历遍所有的slave核，不包括master核*/
+	// uiCoreId = rte_get_next_lcore(uiCoreId, 1, 0);
+	// RTE_LCORE_FOREACH_SLAVE(uiCoreId) {
+	// 	rte_eal_remote_launch(lcore_mainloop, NULL, uiCoreId);
+	// }
+
+
 
 	/*主线程负责将网卡的数据放入in ring队列，将要发送的网卡数据从out ring队列拿出发送*/
     while (1) 
