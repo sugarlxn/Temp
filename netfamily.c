@@ -172,6 +172,8 @@ static int pkt_process(void *arg)
                 if(pstIpHdr->next_proto_id == IPPROTO_UDP ) // udp 
                 {	
 					pstUdpHdr =(struct rte_udp_hdr*)(pstIpHdr + 1);
+					udp_process(pstMbuf[i]);
+/*
 					// printf("udp_process dst_port:%d\n", ntohs(pstUdpHdr->dst_port));
 					//FIXME 端口过滤 当有多个udp服务端时，将会有多个 udp localport 端口
 					if(pstUdpHdr->dst_port == htons(8889)){
@@ -183,10 +185,13 @@ static int pkt_process(void *arg)
 						rte_kni_tx_burst(g_pstKni, pstMbuf, iRxNum);
 						// printf("udp --> rte_kni_handle_request\n");
 					}
+*/
 				}
                 else if(pstIpHdr->next_proto_id == IPPROTO_TCP)  // tcp
                 {
 					pstTcpHdr = (struct rte_tcp_hdr *)(pstIpHdr + 1);
+					tcp_process(pstMbuf[i]);
+/*
 					//FIXME 端口过滤 当有多个TCP服务端时，将会有多个TCP dport 端口
 					if(pstTcpHdr->dst_port == htons(9999)){
 						// printf("tcp_process ---\n");
@@ -196,6 +201,7 @@ static int pkt_process(void *arg)
 						rte_kni_tx_burst(g_pstKni, pstMbuf, iRxNum);
 						// printf("tcp --> rte_kni_handle_request\n");
 					}
+*/
 				}
 				else
 				{

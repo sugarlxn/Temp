@@ -59,7 +59,7 @@
 //debug 模式
 #define ENABLE_DEBUG 0
 //滑动窗口管理模式
-#define ENABLE_WINDOW_MANAGE 1
+#define ENABLE_WINDOW_MANAGE 0
 
 // 头插法 
 #define LL_ADD(item, list) do			 \
